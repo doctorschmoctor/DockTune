@@ -8,7 +8,7 @@ struct DockTuneApp: App {
         MenuBarExtra {
             ContentView()
                 .environmentObject(model)
-                .frame(width: 360, height: 600)
+                .frame(width: 360, height: 580)
         } label: {
             Image(systemName: "music.note")
         }

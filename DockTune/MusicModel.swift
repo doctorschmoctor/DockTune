@@ -1,38 +1,55 @@
-import Foundation
-import MusicKit
+import AppKit
 
-/// Everything DockTune knows about Apple Music: access, search, recents,
-/// playlists, and the station currently queued in the player.
+/// State for the menu bar card: what's playing, search, recents and playlists.
 @MainActor
 final class MusicModel: ObservableObject {
-    @Published private(set) var authorization = MusicAuthorization.currentStatus
-    @Published private(set) var canPlayCatalog = true
-    @Published private(set) var searchResults: [Song] = []
-    @Published private(set) var recentlyPlayed: [Song] = []
-    @Published private(set) var playlists: [UserPlaylist] = []
-    @Published private(set) var isStartingStation = false
-    @Published var errorMessage: String?
+    @Published private(set) var nowPlaying: MusicApp.NowPlaying?
+    @Published private(set) var artwork: NSImage?
+    @Published private(set) var searchResults: [Catalog.Song] = []
+    @Published private(set) var recentlyPlayed: [MusicApp.LibraryTrack] = []
+    @Published private(set) var playlists: [String] = []
+    @Published var message: String?
 
-    let player = ApplicationMusicPlayer.shared
+    private var artworkTrackID: String?
 
-    // MARK: Access
+    // MARK: Now playing
 
-    func requestAccess() async {
-        authorization = await MusicAuthorization.request()
-        guard authorization == .authorized else { return }
-        await loadAfterAuthorization()
-    }
-
-    func loadAfterAuthorization() async {
-        guard authorization == .authorized else { return }
-        if let subscription = try? await MusicSubscription.current {
-            canPlayCatalog = subscription.canPlayCatalogContent
+    /// Called about once a second while the card is open.
+    func refresh() async {
+        guard MusicApp.isRunning else {
+            nowPlaying = nil
+            artwork = nil
+            return
         }
-        await loadRecentlyPlayed()
-        await loadPlaylists()
+        let current = try? MusicApp.nowPlaying()
+        if current != nowPlaying { nowPlaying = current }
+
+        if let current, current.persistentID != artworkTrackID {
+            artworkTrackID = current.persistentID
+            artwork = MusicApp.currentArtwork()
+            if artwork == nil { artwork = await catalogArtwork(for: current) }
+        }
     }
 
-    // MARK: Search and recents
+    private func catalogArtwork(for track: MusicApp.NowPlaying) async -> NSImage? {
+        guard let match = try? await Catalog.match(title: track.title, artist: track.artist),
+              let url = match.artworkURL(size: 300),
+              let response = try? await URLSession.shared.data(from: url)
+        else { return nil }
+        return NSImage(data: response.0)
+    }
+
+    func playPause() { perform(MusicApp.playPause) }
+    func next() { perform(MusicApp.nextTrack) }
+    func previous() { perform(MusicApp.previousTrack) }
+    func seek(to seconds: TimeInterval) { perform { try MusicApp.seek(to: seconds) } }
+
+    func toggleFavorite() {
+        guard let nowPlaying else { return }
+        perform { try MusicApp.setFavorite(!nowPlaying.isFavorite) }
+    }
+
+    // MARK: Search, recents, playlists
 
     func search(_ term: String) async {
         let term = term.trimmingCharacters(in: .whitespaces)
@@ -41,172 +58,52 @@ final class MusicModel: ObservableObject {
             return
         }
         do {
-            var request = MusicCatalogSearchRequest(term: term, types: [Song.self])
-            request.limit = 20
-            let response = try await request.response()
-            searchResults = Array(response.songs)
+            searchResults = try await Catalog.search(term)
         } catch {
-            report(error)
+            message = error.localizedDescription
         }
     }
 
-    func loadRecentlyPlayed() async {
-        do {
-            let url = URL(string: "https://api.music.apple.com/v1/me/recent/played/tracks?limit=20")!
-            let response = try await MusicDataRequest(urlRequest: URLRequest(url: url)).response()
-            let decoded = try JSONDecoder().decode(SongsResponse.self, from: response.data)
-            var seen = Set<MusicItemID>()
-            recentlyPlayed = decoded.data.filter { seen.insert($0.id).inserted }
-        } catch {
-            report(error)
-        }
+    func loadLibrary() {
+        guard MusicApp.isRunning else { return }
+        recentlyPlayed = (try? MusicApp.recentlyPlayed()) ?? []
+        playlists = (try? MusicApp.playlists()) ?? []
+    }
+
+    func play(_ track: MusicApp.LibraryTrack) { perform { try MusicApp.play(track) } }
+
+    /// Adds `track`, or the current song when nil, to a playlist without changing what's playing.
+    func add(_ track: MusicApp.LibraryTrack?, toPlaylist name: String) {
+        perform { try MusicApp.add(track, toPlaylist: name) }
+        if message == nil { message = "Added to \(name)." }
     }
 
     // MARK: Stations
 
-    /// Plays `song` right away, then queues a station of songs like it:
-    /// the artist's top songs mixed with top songs from similar artists.
-    func startStation(from song: Song) async {
-        isStartingStation = true
-        defer { isStartingStation = false }
-        do {
-            player.queue = ApplicationMusicPlayer.Queue(for: [song])
-            try await player.play()
+    func startStation(from song: Catalog.Song) {
+        Catalog.openStation(for: song)
+        message = "Opened the \(song.trackName) station in Music. Press Play there if it doesn't start."
+    }
 
-            let mix = await stationSongs(like: song)
-            if !mix.isEmpty {
-                try await player.queue.insert(mix, position: .tail)
+    func startStation(title: String, artist: String) async {
+        do {
+            guard let song = try await Catalog.match(title: title, artist: artist) else {
+                message = "Couldn't find \(title) on Apple Music."
+                return
             }
+            startStation(from: song)
         } catch {
-            report(error)
+            message = error.localizedDescription
         }
     }
 
-    private func stationSongs(like song: Song) async -> [Song] {
-        guard let artist = await catalogArtist(for: song),
-              let detailed = try? await artist.with([.topSongs, .similarArtists])
-        else { return [] }
-
-        var pool = Array((detailed.topSongs ?? []).prefix(10))
-        for similar in (detailed.similarArtists ?? []).prefix(8) {
-            if let other = try? await similar.with([.topSongs]) {
-                pool += (other.topSongs ?? []).prefix(5)
-            }
-        }
-
-        var seen: Set<MusicItemID> = [song.id]
-        var seenTitles: Set<String> = [song.title.lowercased()]
-        let unique = pool.filter { candidate in
-            seen.insert(candidate.id).inserted && seenTitles.insert(candidate.title.lowercased()).inserted
-        }
-        return Array(unique.shuffled().prefix(40))
-    }
-
-    /// Recently played items can be library songs, which don't carry catalog
-    /// relationships, so fall back to finding the song in the catalog.
-    private func catalogArtist(for song: Song) async -> Artist? {
-        if let detailed = try? await song.with([.artists]),
-           let artist = detailed.artists?.first,
-           !artist.id.rawValue.hasPrefix("r.") { // "r." IDs are library artists
-
-            return artist
-        }
-        var request = MusicCatalogSearchRequest(term: "\(song.title) \(song.artistName)", types: [Song.self])
-        request.limit = 1
-        guard let match = try? await request.response().songs.first,
-              let detailed = try? await match.with([.artists])
-        else { return nil }
-        return detailed.artists?.first
-    }
-
-    // MARK: Playlists and ratings
-
-    func loadPlaylists() async {
+    private func perform(_ action: () throws -> Void) {
         do {
-            let url = URL(string: "https://api.music.apple.com/v1/me/library/playlists?limit=100")!
-            let response = try await MusicDataRequest(urlRequest: URLRequest(url: url)).response()
-            let decoded = try JSONDecoder().decode(UserPlaylistsResponse.self, from: response.data)
-            playlists = decoded.data.filter { $0.attributes?.canEdit ?? true }
+            message = nil
+            try action()
+            Task { await refresh() }
         } catch {
-            report(error)
-        }
-    }
-
-    /// Adds the song to the playlist without touching what's playing.
-    func add(_ song: Song, to playlist: UserPlaylist) async {
-        let body: [String: Any] = ["data": [["id": song.id.rawValue, "type": song.libraryAwareType]]]
-        await send("POST", "v1/me/library/playlists/\(playlist.id)/tracks", body: body)
-    }
-
-    func love(_ song: Song) async {
-        let body: [String: Any] = ["type": "rating", "attributes": ["value": 1]]
-        await send("PUT", "v1/me/ratings/\(song.libraryAwareType)/\(song.id.rawValue)", body: body)
-    }
-
-    private func send(_ method: String, _ path: String, body: [String: Any]) async {
-        do {
-            var request = URLRequest(url: URL(string: "https://api.music.apple.com/\(path)")!)
-            request.httpMethod = method
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-            _ = try await MusicDataRequest(urlRequest: request).response()
-        } catch {
-            report(error)
-        }
-    }
-
-    private func report(_ error: Error) {
-        errorMessage = error.localizedDescription
-    }
-}
-
-// MARK: - Apple Music API payloads
-
-/// Skips items that aren't songs (recently played can include music videos).
-struct SongsResponse: Decodable {
-    let data: [Song]
-
-    private enum CodingKeys: String, CodingKey { case data }
-
-    private struct MaybeSong: Decodable {
-        let song: Song?
-        init(from decoder: Decoder) throws { song = try? Song(from: decoder) }
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        data = try container.decode([MaybeSong].self, forKey: .data).compactMap(\.song)
-    }
-}
-
-struct UserPlaylistsResponse: Decodable {
-    let data: [UserPlaylist]
-}
-
-struct UserPlaylist: Decodable, Identifiable, Hashable {
-    struct Attributes: Decodable, Hashable {
-        let name: String
-        let canEdit: Bool?
-    }
-
-    let id: String
-    let attributes: Attributes?
-
-    var name: String { attributes?.name ?? "Untitled Playlist" }
-}
-
-extension Song {
-    /// Library song IDs start with "i."; everything else is a catalog song.
-    var libraryAwareType: String {
-        id.rawValue.hasPrefix("i.") ? "library-songs" : "songs"
-    }
-}
-
-extension MusicPlayer.Queue.Entry {
-    var song: Song? {
-        switch item {
-        case .song(let song): return song
-        default: return nil
+            message = error.localizedDescription
         }
     }
 }

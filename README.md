@@ -1,19 +1,22 @@
 # DockTune
 
-An Apple Music card in your Mac's menu bar. Click the ♪ at the top right of
-the screen and a card drops down where you can:
+An Apple Music card in your Mac's menu bar, built on the Music app. Free:
+no Apple Developer account needed. Click the ♪ at the top right of the screen
+and a card drops down where you can:
 
-- search Apple Music, or pick something you played recently
-- click any song to start a station from it right away
-- see the current song's cover, title, artist and a progress bar you can drag,
-  with previous, play/pause and next
-- see what's up next on the station and jump to any of it
-- add a song to one of your playlists (without changing what's playing),
-  Love it, or start a new station from it, from the ⋯ menu on each song
+- search Apple Music and click a song to open its station in Music
+- see what's playing: cover, title, artist, album, a progress bar you can
+  drag, and previous, play/pause and next
+- favorite the current song, or add it to one of your playlists
+- see library songs you played in the last two weeks; click one to start its
+  station, or use its ⋯ menu to play it or add it to a playlist
 
-DockTune plays music itself through Apple's MusicKit, so the sound comes from
-DockTune rather than the Music app. A station is the song you clicked
-followed by about 40 songs from that artist and similar artists.
+What the free version can't do, because Music doesn't let other apps do it:
+
+- show Music's Up Next list
+- start a station without you seeing Music: Start Station opens the station
+  in Music, and you may need to press Play there once
+- add search results (songs not in your library) to a playlist
 
 ## Get it on your Mac
 
@@ -25,27 +28,23 @@ open DockTune/DockTune.xcodeproj
 
 Already cloned? `cd ~/Desktop/code/DockTune && git pull`.
 
-## One-time MusicKit setup
+## Build and run
 
-Requirements: macOS 14+, Xcode 16+, an Apple Music subscription, and a paid
-Apple Developer Program membership (MusicKit can't be turned on for a free
-account).
+Requirements: macOS 14+, Xcode 16+.
 
-1. In Xcode, select the DockTune target › Signing & Capabilities and choose
-   your Team. Xcode registers the app ID `com.doctorschmoctor.DockTune` for you.
-2. At developer.apple.com › Certificates, Identifiers & Profiles ›
-   Identifiers, open `com.doctorschmoctor.DockTune`, go to the
-   App Services tab, tick **MusicKit**, and save.
-3. Press ⌘R. Click ♪ in the menu bar and choose Allow Access.
-
-If search or playback says it can't get a developer token, step 2 hasn't
-taken effect yet; it can take a few minutes after saving.
+1. Open `DockTune.xcodeproj` and press ⌘R. It's signed to run locally, so no
+   developer account is needed.
+2. Click ♪ in the menu bar. When macOS asks "DockTune wants to control Music",
+   click OK. If you dismissed it, turn it on in System Settings › Privacy &
+   Security › Automation.
 
 ## How it's put together
 
 - `DockTune/DockTuneApp.swift` puts the card in the menu bar (`MenuBarExtra`).
   `LSUIElement` keeps DockTune out of the Dock.
-- `DockTune/MusicModel.swift` does access, search, recently played, playlists,
-  Love and building stations. Recents, playlists and Love use the Apple Music
-  API through `MusicDataRequest`.
-- `DockTune/Views/` holds the card: now playing, the song lists and the ⋯ menu.
+- `DockTune/MusicApp.swift` talks to the Music app with AppleScript.
+- `DockTune/Catalog.swift` searches Apple Music with Apple's free iTunes Search
+  API and opens a song's station (`ra.<song ID>`) in Music.
+- `DockTune/MusicModel.swift` holds the card's state and refreshes it every
+  second while the card is open.
+- `DockTune/Views/` holds the card itself.

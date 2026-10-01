@@ -1,27 +1,36 @@
-import MusicKit
 import SwiftUI
 
 struct NowPlayingView: View {
-    @EnvironmentObject private var model: MusicModel
-    @ObservedObject private var state = ApplicationMusicPlayer.shared.state
-    @ObservedObject private var queue = ApplicationMusicPlayer.shared.queue
+    @EnvironmentObject var model: MusicModel
 
     var body: some View {
-        if let entry = queue.currentEntry {
+        if let track = model.nowPlaying {
             VStack(spacing: 10) {
                 HStack(spacing: 12) {
-                    Cover(artwork: entry.artwork, size: 72)
+                    Cover(image: model.artwork, url: nil, size: 72)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.title).font(.headline).lineLimit(1)
-                        Text(entry.subtitle ?? "").foregroundStyle(.secondary).lineLimit(1)
+                        Text(track.title).font(.headline).lineLimit(1)
+                        Text(track.artist).foregroundStyle(.secondary).lineLimit(1)
+                        Text(track.album).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 0)
-                    if let song = entry.song {
-                        SongActions(song: song, showsStation: false)
+                    Button { model.toggleFavorite() } label: {
+                        Image(systemName: track.isFavorite ? "star.fill" : "star")
                     }
+                    .buttonStyle(.plain)
+                    .help("Favorite")
+                    PlaylistMenu(track: nil)
                 }
-                ProgressBar(duration: entry.song?.duration ?? 0)
-                controls
+                ProgressBar(position: track.position, duration: track.duration) { model.seek(to: $0) }
+                HStack(spacing: 28) {
+                    Button { model.previous() } label: { Image(systemName: "backward.fill") }
+                    Button { model.playPause() } label: {
+                        Image(systemName: track.isPlaying ? "pause.fill" : "play.fill").font(.title)
+                    }
+                    Button { model.next() } label: { Image(systemName: "forward.fill") }
+                }
+                .buttonStyle(.plain)
+                .font(.title2)
             }
         } else {
             Text("Search for a song or pick one you played recently to start a station.")
@@ -31,77 +40,60 @@ struct NowPlayingView: View {
                 .frame(maxWidth: .infinity, minHeight: 72)
         }
     }
-
-    private var controls: some View {
-        HStack(spacing: 28) {
-            Button { Task { try? await model.player.skipToPreviousEntry() } } label: {
-                Image(systemName: "backward.fill")
-            }
-            Button { togglePlayback() } label: {
-                Image(systemName: state.playbackStatus == .playing ? "pause.fill" : "play.fill")
-                    .font(.title)
-            }
-            Button { Task { try? await model.player.skipToNextEntry() } } label: {
-                Image(systemName: "forward.fill")
-            }
-        }
-        .buttonStyle(.plain)
-        .font(.title2)
-    }
-
-    private func togglePlayback() {
-        if state.playbackStatus == .playing {
-            model.player.pause()
-        } else {
-            Task { try? await model.player.play() }
-        }
-    }
 }
 
-private struct ProgressBar: View {
+struct ProgressBar: View {
+    let position: TimeInterval
     let duration: TimeInterval
-    let player = ApplicationMusicPlayer.shared
+    let seek: (TimeInterval) -> Void
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.5)) { _ in
-            let elapsed = min(player.playbackTime, max(duration, 0))
-            VStack(spacing: 2) {
-                Slider(
-                    value: Binding(get: { elapsed }, set: { player.playbackTime = $0 }),
-                    in: 0...max(duration, 1)
-                )
-                .controlSize(.small)
-                HStack {
-                    Text(format(elapsed))
-                    Spacer()
-                    Text("-" + format(max(duration - elapsed, 0)))
-                }
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
+        VStack(spacing: 2) {
+            Slider(
+                value: Binding(get: { min(position, duration) }, set: seek),
+                in: 0...max(duration, 1)
+            )
+            .controlSize(.small)
+            HStack {
+                Text(formatTime(position))
+                Spacer()
+                Text("-" + formatTime(max(duration - position, 0)))
             }
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.secondary)
         }
-    }
-
-    private func format(_ seconds: TimeInterval) -> String {
-        let total = Int(seconds.rounded(.down))
-        return String(format: "%d:%02d", total / 60, total % 60)
     }
 }
 
+func formatTime(_ seconds: TimeInterval) -> String {
+    let total = Int(seconds.rounded(.down))
+    return String(format: "%d:%02d", total / 60, total % 60)
+}
+
+/// Album art from either an image Music gave us or a catalog URL.
 struct Cover: View {
-    let artwork: Artwork?
+    let image: NSImage?
+    let url: URL?
     let size: CGFloat
 
     var body: some View {
         Group {
-            if let artwork {
-                ArtworkImage(artwork, width: size, height: size)
+            if let image {
+                Image(nsImage: image).resizable().scaledToFill()
+            } else if let url {
+                AsyncImage(url: url) { $0.resizable().scaledToFill() } placeholder: { placeholder }
             } else {
-                Image(systemName: "music.note")
-                    .frame(width: size, height: size)
-                    .background(.quaternary)
+                placeholder
             }
         }
+        .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: size > 50 ? 8 : 4))
+    }
+
+    private var placeholder: some View {
+        Image(systemName: "music.note")
+            .foregroundStyle(.secondary)
+            .frame(width: size, height: size)
+            .background(.quaternary)
     }
 }
