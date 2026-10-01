@@ -53,6 +53,6 @@ enum Catalog {
         guard let url = URL(string: "https://music.apple.com/\(country)/station/station/ra.\(song.trackId)"),
               let music = NSWorkspace.shared.urlForApplication(withBundleIdentifier: MusicApp.bundleID)
         else { return }
-        NSWorkspace.shared.open([url], withApplicationAt: music, configuration: .init())
+        NSWorkspace.shared.open([url], withApplicationAt: music, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
     }
 }
