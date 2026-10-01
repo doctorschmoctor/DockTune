@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>NSAppleEventsUsageDescription</key>
-	<string>DockTune controls the Music app to show what's playing and to play, pause and skip tracks.</string>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>DockTune searches Apple Music, plays stations and adds songs to your playlists.</string>
 </dict>
 </plist>
