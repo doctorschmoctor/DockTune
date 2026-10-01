@@ -14,8 +14,8 @@ and a card drops down where you can:
 What the free version can't do, because Music doesn't let other apps do it:
 
 - show Music's Up Next list
-- start a station without you seeing Music: Start Station opens the station
-  in Music, and you may need to press Play there once
+- start a station entirely on its own: Start Station hands the station to
+  Music in the background (Music stays hidden unless you already had it open)
 - add search results (songs not in your library) to a playlist
 
 ## Get it on your Mac

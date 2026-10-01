@@ -47,12 +47,23 @@ enum Catalog {
         }
     }
 
-    /// Opens the song's Apple Music station in the Music app.
+    /// Opens the song's Apple Music station in the Music app without
+    /// bringing Music to the front.
     /// Song stations use the ID "ra." followed by the song's catalog ID.
     static func openStation(for song: Song) {
         guard let url = URL(string: "https://music.apple.com/\(country)/station/station/ra.\(song.trackId)"),
               let music = NSWorkspace.shared.urlForApplication(withBundleIdentifier: MusicApp.bundleID)
         else { return }
-        NSWorkspace.shared.open([url], withApplicationAt: music, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: MusicApp.bundleID).first
+        let musicWasVisible = running.map { !$0.isHidden } ?? false
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = false
+        configuration.addsToRecentItems = false
+        NSWorkspace.shared.open([url], withApplicationAt: music, configuration: configuration) { app, _ in
+            // Music can still show its window when it handles a link, so hide
+            // it again, unless you already had Music open on screen.
+            guard !musicWasVisible else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { app?.hide() }
+        }
     }
 }

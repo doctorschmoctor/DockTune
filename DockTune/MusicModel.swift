@@ -82,7 +82,7 @@ final class MusicModel: ObservableObject {
 
     func startStation(from song: Catalog.Song) {
         Catalog.openStation(for: song)
-        message = "Opened the \(song.trackName) station in Music. Press Play there if it doesn't start."
+        message = "Starting the \(song.trackName) station…"
     }
 
     func startStation(title: String, artist: String) async {
